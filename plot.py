@@ -17,7 +17,6 @@ ecc_break = 0.1
 PLOT_N = 1e2
 
 colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'w']
-plot_title = ""
 
 def main():
 	if (len(sys.argv) == 1): return
@@ -33,6 +32,17 @@ def main():
 			plot_eccentricity()
 		elif (commands[i] == '-density'):
 			plot_density()
+		elif (commands[i] == '-n'):
+			plot_noft()
+
+def plot_noft():
+	(noft, t) = read_noft(particle_file)
+	fig, nax = plt.subplots()
+
+	nax.plot(t[:len(noft)], noft)
+
+	nax.set(title="N of t")
+	plt.show()
 
 def plot_positions(particlesp):
 	(n, x, y, z, bx, by, bz, t) = read_positions(particle_file)
@@ -40,11 +50,8 @@ def plot_positions(particlesp):
 
 	if (particlesp):
 		for i in range(int(min(PLOT_N, n))):
-			if (x[i] == None): continue
-
 			t_temp = t[:len(x[i])]
 			xaxs.plot(t_temp, x[i]); yaxs.plot(t_temp, y[i]); zaxs.plot(t_temp, z[i])
-			#raxs.plot(t, [(x[i][j]**2 + y[i][j]**2 + z[i][j]**2)**0.5 for j in range(len(t))])
 	else:
 		t = t[:len(bx[0])]
 		xaxs.plot(t, bx[0])
@@ -57,20 +64,19 @@ def plot_positions(particlesp):
 			zaxs.plot(t, bz[1])
 
 	xaxs.set_ylabel("X"); yaxs.set_ylabel("Y"); zaxs.set_ylabel("Z");
-	fig.suptitle("1e4 Particles")
+	fig.suptitle("Positions")
 	plt.show()
 
 def plot_orbits():
 	(n, a, e, inc, Omega, t) = read_orbits(particle_file)
 	fig, (aaxs, eaxs, iaxs, Oaxs) = plt.subplots(4, 1, sharex=True)
 
-	for i in range(10):
-		if (a[i] == None): continue
-
-		aaxs.plot(t, a[i]);
-		eaxs.plot(t, e[i]);
-		iaxs.plot(t, [inci / math.pi for inci in inc[i]]);
-		Oaxs.plot(t, [Omegai / math.pi for Omegai in Omega[i]])
+	for i in range(int(min(PLOT_N, n))):
+		t_temp = t[:len(a[i])]
+		aaxs.plot(t_temp, a[i]);
+		eaxs.plot(t_temp, e[i]);
+		iaxs.plot(t_temp, [inci / math.pi for inci in inc[i]]);
+		Oaxs.plot(t_temp, [Omegai / math.pi for Omegai in Omega[i]])
 
 	aaxs.set_ylabel("A")
 	eaxs.set_ylabel("E")
@@ -127,41 +133,53 @@ def plot_eccentricity():
 """
 
 tree_roots = []
-depth = 4
+depth = [8,8,8,8,8,7,7,7,7,6]
 def plot_density():
-	tree_roots = read_tree(treefile, \
-		 	       sum(1 for file in os.listdir() \
-		if (file.startswith(treefile) and file.endswith(".txt"))))
+	num_tree = sum(1 for file in os.listdir() \
+			if (file.startswith(treefile+'0_') and file.endswith(".txt")))
+	num_out = sum(1 for file in os.listdir() \
+			if (file.startswith(treefile) and file.endswith('_0'+".txt")))
 
-	mass = []
-	for root in tree_roots:
-		add_masses(root, mass, depth, 1)
+	fig, ax_vec = plt.subplots(math.ceil(num_out/5), min(5,num_out))
 
-	densities = {}
-	x, y = [], []
-	max_density = 0
-	for m in mass:
-		if ((m[0], m[1]) in densities):
-			densities[(m[0], m[1])] += m[2] % 1
+	for i in range(num_out):
+		tree_roots = read_tree(treefile+str(i), num_tree)
+
+		mass = []
+		for root in tree_roots:
+			add_masses(root, mass, depth[i], 1)
+
+		densities = {}
+		x, y = [], []
+		max_density = 0
+		for m in mass:
+			if ((m[0], m[1]) in densities):
+				densities[(m[0], m[1])] += m[2] % 1
+			else:
+				densities[(m[0], m[1])] = m[2] % 1
+			if (densities[(m[0], m[1])] > max_density):
+				max_density = densities[(m[0], m[1])]
+
+			if (m[0] not in x): bisect.insort(x, m[0])
+			if (m[1] not in y): bisect.insort(y, m[1])
+
+		size = max(len(x), len(y))
+		if (len(x) < size): x = y
+		if (len(y) < size): y = x
+		plot_arr = [[0 for i in range(size)] for j in range(size)]
+		for row in range(size):
+			for col in range(size):
+				if (row < len(x) and col < len(y) and \
+				    (x[row], y[col]) in densities):
+					plot_arr[row][col] = densities[(x[row],y[col])] / max_density
+
+		if (num_out == 1):
+			ax_vec.pcolor(x, y, plot_arr, cmap="coolwarm", shading="auto")
+		elif (num_out <= 5):
+			ax_vec[i].pcolor(x, y, plot_arr, cmap="coolwarm", shading="auto")
 		else:
-			densities[(m[0], m[1])] = m[2] % 1
-		if (densities[(m[0], m[1])] > max_density):
-			max_density = densities[(m[0], m[1])]
+			ax_vec[i//5][i%5].pcolor(x,y, plot_arr, cmap="coolwarm", shading="auto")
 
-		if (m[0] not in x): bisect.insort(x, m[0])
-		if (m[1] not in y): bisect.insort(y, m[1])
-
-	size = max(len(x), len(y))
-	if (len(x) < size): x = y
-	if (len(y) < size): y = x
-	plot_arr = [[0 for i in range(size)] for j in range(size)]
-	for row in range(size):
-		for col in range(size):
-			if (row < len(x) and col < len(y) and \
-			    (x[row], y[col]) in densities):
-				plot_arr[row][col] = densities[(x[row],y[col])] / max_density
-
-	plt.pcolor(x, y, plot_arr, cmap="coolwarm", shading="auto")
 	plt.show()
 
 def add_masses(node, mass, max_depth, cur_depth):

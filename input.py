@@ -47,6 +47,20 @@ def read_files(ascii_file, orbit_file, energy_file):
 	fascii.close(); forbit.close(); fenergy.close()
 	return (n,t,x,v,a,e,I,Omega,omega)
 
+def read_noft(particle_file):
+	noft = []
+	t = []
+
+	pt_file = open(particle_file, 'r')
+	for line in pt_file.readlines():
+		if (line.startswith("@@@")):
+			t.append(t_val(line))
+		elif (line.startswith("###")):
+			noft.append(noft_val(line))
+	pt_file.close()
+
+	return (noft, t)
+
 def read_positions(particle_file):
 	pt_file = open(particle_file, 'r')
 
@@ -57,7 +71,7 @@ def read_positions(particle_file):
 		x.append([]); y.append([]); z.append([])
 
 	for line in pt_file.readlines():
-		if (line.startswith("***")): continue
+		if (line.startswith("***") or line.startswith("###")): continue
 		if (line.startswith("@@@")):
 			t.append(t_val(line))
 			continue
@@ -77,12 +91,6 @@ def read_positions(particle_file):
 
 	pt_file.close()
 
-	for i in range(n):
-		if (len(x[i]) < len(t)):
-			x[i] = None
-			y[i] = None
-			z[i] = None
-
 	return (n, x, y, z, bx, by, bz, t)
 
 
@@ -95,7 +103,7 @@ def read_orbits(particle_file):
 		a.append([]); e.append([]); i.append([]); Omega.append([])
 
 	for line in pt_file.readlines():
-		if (line.startswith("***")): continue
+		if (line.startswith("***") or line.startswith("###")): continue
 		if (line.startswith("@@@")):
 			t.append(t_val(line))
 			continue
@@ -110,13 +118,6 @@ def read_orbits(particle_file):
 		Omega[hash].append(Omega_val(line))
 
 	pt_file.close()
-
-	for j in range(n):
-		if (len(a[j]) < len(t)):
-			a[j] = None
-			e[j] = None
-			i[j] = None
-			Omega[j] = None
 
 	return (n, a, e, i, Omega, t)
 
@@ -235,6 +236,9 @@ def binary_initials(filename):
 
 def t_val(line):
 	return float(line.strip(" @\n"))
+
+def noft_val(line):
+	return int(line.strip(" #\n"))
 
 def hash_val(line):
 	return line.split()[0]

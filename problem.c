@@ -20,16 +20,15 @@
 #include "tools.h"
 
 #include "output.h"
-#include "communication_mpi.h"
 
 int N_INITIAL = 1e4;
 double DISC_MASS = 2e-1;
-int TMAX = 1e3;
+const int TMAX = 1e2;
 
-int OUT_INTERVAL = 100;
+int OUT_INTERVAL = 10;
+int OUT_TREE_N = 0;
 
 void heartbeat(struct reb_simulation* const r);
-void write_sim(struct reb_simulation* const r);
 
 int main(int argc, char* argv[]){
     struct reb_simulation* const r = reb_create_simulation();
@@ -45,16 +44,18 @@ int main(int argc, char* argv[]){
     // Setup root boxes for gravity tree.
     // Here, we use 2x2=4 root boxes (each with length 'boxsize')
     // This allows you to use up to 4 MPI nodes.
-    reb_configure_box(r,100,2,2,1);
+    reb_configure_box(r,boxsize,2,2,1);
+	r->collisions = REB_COLLISION_TREE;
+
+    // Initialize MPI
+    // This can only be done after reb_configure_box.
+    reb_mpi_init(r);
 
 	if (r->mpi_id==0) {
 		clean_files("particles.txt", "tree");
 		write_header("particles.txt", N_INITIAL, 0, 1, 0);
 	}
 
-    // Initialize MPI
-    // This can only be done after reb_configure_box.
-    reb_mpi_init(r);
 
     // Setup particles only on master node
     // In the first timestep, the master node will 
@@ -70,7 +71,8 @@ int main(int argc, char* argv[]){
     if (r->mpi_id==0){
         reb_add(r, star);
     }
-    for (int i=0;i<N;i++){
+	int start_i = r->mpi_id*N;
+    for (int i=start_i;i<start_i+N;i++){
         struct reb_particle pt = {0};
         double a    = reb_random_powerlaw(r, boxsize/10.,boxsize/2./1.2,-1.5);
         double phi     = reb_random_uniform(r, 0,2.*M_PI);
@@ -83,6 +85,7 @@ int main(int argc, char* argv[]){
         pt.vy         = -vkep * cos(phi);
         pt.vz         = 0;
         pt.m         = disc_mass/(double)N;
+	pt.r = 4e-5;
 
 	char hash_str[16]; sprintf(hash_str, "%d", i);
 	pt.hash = reb_hash(hash_str);
@@ -96,31 +99,34 @@ int main(int argc, char* argv[]){
     r->allocatedN *=8;
     r->particles = realloc(r->particles,sizeof(struct reb_particle)*r->allocatedN);
 #endif // OPENGL
-    
-//	reb_move_to_com(r);
 
     // Start the integration
     reb_integrate(r, TMAX);
 
     // Cleanup
+    MPI_Barrier(MPI_COMM_WORLD);
     reb_mpi_finalize(r);
     reb_free_simulation(r); 
 }
 
+char out_tree[16];
 void heartbeat(struct reb_simulation* const r){
-    if (reb_output_check(r,10.0*r->dt)){
-        reb_output_timing(r,0);
-    }
-	if (reb_output_check(r, OUT_INTERVAL)) {
-		write_sim(r);
+	move_to_com(r);
+
+	if (reb_output_check(r,10.0*r->dt))
+		reb_output_timing(r,0);
+
+	if (reb_output_check(r, OUT_INTERVAL))
+		write_sim(r, "particles.txt", 0);
+
+	if (r->t > 0 && reb_output_check(r, (double) TMAX / OUT_TREE_N)) {
+		sprintf(out_tree, "tree%d", (int) (r->t / ((double) TMAX / OUT_TREE_N))-1);
+		write_tree(r, out_tree);
 	}
-	//reb_move_to_com(r);
-}
 
-void write_sim(struct reb_simulation* const r) {
-	if (r->mpi_id != 0)
-		for (int i = 0; i < r->N; i++)
-			reb_communication_mpi_add_particle_to_send_queue(r, r->particles[i], 0);
-
-	write_particles(r, "particles.txt", 0);
+	if (r->t >= TMAX) {
+		reb_output_timing(r,0);
+		printf("\n");
+	}
+	
 }
