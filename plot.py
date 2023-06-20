@@ -2,38 +2,41 @@
 
 import sys
 import math
-from array import *
+#from array import *
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.optimize import curve_fit
-import bisect
+#from random import randint
+#from random import random
 from input import *
 
-particle_file = "particles.txt"
-treefile = "tree"
+particle_file = "out_particles/particles.txt"		# Path to input file
+break_point = 0.9	# Used for a_avg and e_avg. Averaging will ignore first (break_point*100)% of time integrated
+nbuckets = 100
+tree_plotn = 100	# Number of frames in tree.mp4
+depth = 8		# Depth of gravity tree searched when plotting density
+PLOT_N = 1e1		# Number of particles shown when plotting positions
 
-ecc_break = 0.1
-PLOT_N = 1e2
-
-colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'w']
+ffmpeg_path = "ffmpeg"	# Path to ffmpeg executable
 
 def main():
+	global particle_file
 	if (len(sys.argv) == 1): return
 
-	global n_ecc
 	commands = sys.argv[1:]
 	for i in range(len(commands)):
 		if (commands[i] == '-positions'):
 			plot_positions(not (len(commands)-1 > i and commands[i+1] == '-b'))
-		elif (commands[i] == '-orbits'):
-			plot_orbits()
-		elif (commands[i] == '-eccentricity'):
-			plot_eccentricity()
-		elif (commands[i] == '-density'):
-			plot_density()
 		elif (commands[i] == '-n'):
 			plot_noft()
+		elif (commands[i] == '-e_avg'):
+			plot_eavg()
+		elif (commands[i] == '-a_avg'):
+			plot_aavg()
+		elif (commands[i] == '-tree'):
+			plot_tree()
+		elif (commands[i] == '-i'):
+			particle_file = commands[i+1]
 
 def plot_noft():
 	(noft, t) = read_noft(particle_file)
@@ -45,179 +48,177 @@ def plot_noft():
 	plt.show()
 
 def plot_positions(particlesp):
-	(n, x, y, z, bx, by, bz, t) = read_positions(particle_file)
-	fig, (xaxs, yaxs, zaxs) = plt.subplots(3, 1, sharex=True)
+	(n_initial, t, noft, particles, stars) = read_particles(particle_file)
+	fig, (xaxs, yaxs, zaxs, raxs) = plt.subplots(4, 1, sharex=True)
 
 	if (particlesp):
-		for i in range(int(min(PLOT_N, n))):
-			t_temp = t[:len(x[i])]
-			xaxs.plot(t_temp, x[i]); yaxs.plot(t_temp, y[i]); zaxs.plot(t_temp, z[i])
+		count = 0
+		for particle in particles:
+			t_particle = t[:particle.max_t()]
+			xaxs.plot(t_particle, particle.get_x())
+			yaxs.plot(t_particle, particle.get_y())
+			zaxs.plot(t_particle, particle.get_z())
+			raxs.plot(t_particle, particle.get_a())
+
+			count += 1
+			if (count >= PLOT_N): break
 	else:
-		t = t[:len(bx[0])]
-		xaxs.plot(t, bx[0])
-		yaxs.plot(t, by[0])
-		zaxs.plot(t, bz[0])
+		for star in stars:
+			t_star = t[:star.max_t()]
+			xaxs.plot(t_star, star.get_x())
+			yaxs.plot(t_star, star.get_y())
+			zaxs.plot(t_star, star.get_z())
 
-		if (len(bx[1]) != 0):
-			xaxs.plot(t, bx[1])
-			yaxs.plot(t, by[1])
-			zaxs.plot(t, bz[1])
+		if (len(stars) == 2):
+			bx = [stars[0].get_x(), stars[1].get_x()]
+			by = [stars[0].get_y(), stars[1].get_y()]
+			bz = [stars[0].get_z(), stars[1].get_z()]
+			raxs.plot(t[:min(stars[0].max_t(), stars[1].max_t())], \
+				[math.sqrt((bx[0][i]-bx[1][i])**2 + (by[0][i]-by[1][i])**2 + (bz[0][i]-bz[1][i])**2) \
+				for i in range(min(stars[0].max_t(), stars[1].max_t()))])
 
-	xaxs.set_ylabel("X"); yaxs.set_ylabel("Y"); zaxs.set_ylabel("Z");
+	xaxs.set_ylabel("X"); yaxs.set_ylabel("Y"); zaxs.set_ylabel("Z"); raxs.set_ylabel("A")
 	fig.suptitle("Positions")
 	plt.show()
 
-def plot_orbits():
-	(n, a, e, inc, Omega, t) = read_orbits(particle_file)
-	fig, (aaxs, eaxs, iaxs, Oaxs) = plt.subplots(4, 1, sharex=True)
+def plot_aavg():
+	(n_initial, t, noft, particles, stars) = read_particles(particle_file)
+	break_index = math.floor(break_point * len(t))
 
-	for i in range(int(min(PLOT_N, n))):
-		t_temp = t[:len(a[i])]
-		aaxs.plot(t_temp, a[i]);
-		eaxs.plot(t_temp, e[i]);
-		iaxs.plot(t_temp, [inci / math.pi for inci in inc[i]]);
-		Oaxs.plot(t_temp, [Omegai / math.pi for Omegai in Omega[i]])
+	mina,maxa = float('inf'),0
+	maxn = 0
+	buckets = [0]*nbuckets
+	for particle in particles:
+		for i in range(break_index, particle.max_t()):
+			if (particle.get_e()[i] >= 1 or particle.get_a()[i] > 30): continue
+			if (particle.get_a()[i] > maxa): maxa = particle.get_a()[i]
+			if (particle.get_a()[i] < mina): mina = particle.get_a()[i]
 
-	aaxs.set_ylabel("A")
-	eaxs.set_ylabel("E")
-	iaxs.set_ylabel("I/pi")
-	Oaxs.set_ylabel("Omega/pi")
-	fig.suptitle("Orbits")
+	for particle in particles:
+		for i in range(break_index, particle.max_t()):
+			if (particle.get_e()[i] >= 1 or particle.get_a()[i] > 30): continue
+			buckets[math.floor((particle.get_a()[i]-mina) / (1.01*(maxa-mina)) * nbuckets)] += 1
+
+	for i in range(nbuckets):
+		buckets[i] /= len(t) - break_index
+		if (buckets[i] > maxn): maxn = buckets[i]
+
+	plt.scatter(np.linspace(mina, maxa, nbuckets), buckets, c= "red", s=10)
+	plt.xscale('log'); plt.yscale('log')
+	plt.gca().set(xlabel='Semi-major Axis', ylabel='N Particles', xlim=(0.9*mina,1.1*maxa), ylim=(0.9,1.1*maxn))
 	plt.show()
 
-def plot_eccentricity():
-	mr_last = 0
-	i = -1
-	for file in os.listdir():
-		if (not (file.startswith("particles") and file.endswith(".txt"))): continue
-		i += 1
+def plot_eavg():
+	(n_initial, t, noft, particles, stars) = read_particles(particle_file)
+	break_index = math.floor(break_point * len(t))
 
-		(n, a, e, inc, Omega, t) = read_orbits(file)
-		a_avg = average_all(a, ecc_break)
-		e_avg = average_all(e, ecc_break)
+	mina,maxa = 0,0
+	mine,maxe = 0,-float('inf')
+	for particle in particles:
+		if (particle.max_t() == 0): continue
+		for i in range(break_index, particle.max_t()):
+			if (particle.get_e()[i] > 0.9): continue
+			if (particle.get_a()[i] > maxa): maxa = particle.get_a()[i]
+			if (particle.get_e()[i] > maxe): maxe = particle.get_e()[i]
 
-		(mr,ab,eb) = read_binary(file); e_last = eb
-		mu = min(1,mr) / (1+mr)
-		legend = "m1/m2 = " + str(1/mr)
-		plt.plot(a_avg, e_avg, colors[i%len(colors)]+".", label=legend)
+	buckets = [[] for i in range(nbuckets)]
+	for particle in particles:
+		for i in range(break_index, particle.max_t()):
+			if (particle.get_e()[i] > 0.9): continue
+			buckets[math.floor((particle.get_a()[i]-mina) / (1.01*(maxa-mina)) * nbuckets)].append(particle.get_e()[i])
 
-		a_sorted = list(filter(lambda item: item is not None, a_avg))
-		a_sorted.sort()
-		plt.plot(a_sorted, predicted_fit(a_sorted, ab, eb, mu), \
-			 colors[i%len(colors)]+'--');
+	e_out = [0]*nbuckets
+	percentile_low, percentile_high = [0]*nbuckets, [0]*nbuckets
+	for i in range(nbuckets):
+		if (len(buckets[i]) == 0): continue
 
-	plt.title("Binary Eccentricity: " + str(e_last))
-	plt.xlabel("Semi_Major Axis")
-	plt.ylabel("Eccentricity")
-	plt.legend()
+		e_out[i] = sum(buckets[i]) / len(buckets[i])
+		percentile_low[i] = np.percentile(buckets[i], 10)
+		percentile_high[i] = np.percentile(buckets[i], 90)
+
+	plt.scatter(np.linspace(mina,maxa,nbuckets), e_out, c="red", s=10)
+	plt.errorbar(np.linspace(mina,maxa,nbuckets), e_out, yerr=[percentile_low,percentile_high], fmt='none', ecolor='red')
+	plt.gca().set(xlabel="Semi-major Axis", ylabel="Eccentricity", xlim=(mina,maxa), ylim=(mine,maxe))
 	plt.show()
 
-"""
-	for i in range(n_ecc):
-		tag = "_ecc" + str(i+1) + ".txt"
-		ascii_file = "ascii" + tag; orbit_file = "orbits" + tag; energy_file = "energy" + tag
-		(n,t,x,v,a,e,I,Omega,omega) = read_files(ascii_file, orbit_file, energy_file)
+def plot_tree(plot_disc=True, plot_lost=False, plot_binary=False):
+	(n_initial, t, noft, particles, stars) = read_particles(particle_file)
+	lost_particles = read_lost_particles(particles, len(t))
 
-		(m1, m2, ab, eb) = binary_initials(ascii_file)
-		mu = min(m1,m2) / (m1 + m2)
+	for i in range(tree_plotn):
+		curt = math.floor(i * len(t) / (1.01*(tree_plotn - 1))) if (tree_plotn > 1) else 0
 
-		a_avg = average_all(a[1:], ecc_break); e_avg = average_all(e[1:], ecc_break)
-		plt.plot(a_avg, e_avg, colors[i%len(colors)]+".")
-		plt.plot(a_avg, best_fit(a_avg, e_avg, ab, eb, mu), colors[i%len(colors)]+'-')
-		plt.plot(a_avg, predicted_fit(a_avg, ab, eb, mu), colors[i%len(colors)]+'--');
+		if (plot_disc):
+			root = read_tree(particles, curt)
+			xyplane = [[0 for d1 in range(2**depth)] for d2 in range(2**depth)]
+			zyplane = [[0 for d1 in range(2**depth)] for d2 in range(2**depth)]
+			nodes = [root]
+			next = []
+			for d in range(depth):
+				for node in nodes:
+					for child in node.children:
+						if (isinstance(child, Tree_Node)): next.append(child)
+						elif (isinstance(child, Particle)):
+							x = round((child.get_x()[curt] - tree_width/2**(depth+1)) / (tree_width / 2**depth) + 2**(depth-1))
+							y = round((child.get_y()[curt] - tree_width/2**(depth+1)) / (tree_width / 2**depth) + 2**(depth-1))
+							z = round((child.get_z()[curt] - tree_width/2**(depth+1)) / (tree_width / 2**depth) + 2**(depth-1))
 
-	plt.title("Polar: e = 0.5")
-	plt.xlabel("Semi-Major Axis")
-	plt.ylabel("Eccentricity")
-	plt.show()
-"""
+							if (x < 0 or y < 0 or x >= 2**depth or y >= 2**depth):
+								continue
 
-tree_roots = []
-depth = [8,8,8,8,8,7,7,7,7,6]
-def plot_density():
-	num_tree = sum(1 for file in os.listdir() \
-			if (file.startswith(treefile+'0_') and file.endswith(".txt")))
-	num_out = sum(1 for file in os.listdir() \
-			if (file.startswith(treefile) and file.endswith('_0'+".txt")))
+							plt.figure(1); xyplane[x][y] = 1
+							plt.figure(2); zyplane[z][y] = 1
 
-	fig, ax_vec = plt.subplots(math.ceil(num_out/5), min(5,num_out))
+				nodes = [node for node in next]
+				next = []
 
-	for i in range(num_out):
-		tree_roots = read_tree(treefile+str(i), num_tree)
+			for node in nodes:
+				x = int((node.x - tree_width/2**(depth+1)) / (tree_width / 2**depth) + 2**(depth-1))
+				y = int((node.y - tree_width/2**(depth+1)) / (tree_width / 2**depth) + 2**(depth-1))
+				z = int((node.z - tree_width/2**(depth+1)) / (tree_width / 2**depth) + 2**(depth-1))
 
-		mass = []
-		for root in tree_roots:
-			add_masses(root, mass, depth[i], 1)
+				xyplane[x][y] += node.mass
+				zyplane[z][y] += node.mass
 
-		densities = {}
-		x, y = [], []
-		max_density = 0
-		for m in mass:
-			if ((m[0], m[1]) in densities):
-				densities[(m[0], m[1])] += m[2] % 1
-			else:
-				densities[(m[0], m[1])] = m[2] % 1
-			if (densities[(m[0], m[1])] > max_density):
-				max_density = densities[(m[0], m[1])]
+			xymaxm = np.amax(xyplane)
+			zymaxm = np.amax(zyplane)
+			for d1 in range(2**depth):
+				for d2 in range(2**depth):
+					xyplane[d1][d2] /= xymaxm
+					zyplane[d1][d2] /= zymaxm
 
-			if (m[0] not in x): bisect.insort(x, m[0])
-			if (m[1] not in y): bisect.insort(y, m[1])
+		if (plot_lost):
+			for particle in lost_particles:
+				if (particle.max_t() > curt):
+					x = (particle.get_x()[curt] - tree_width/2**(depth+1)) / (tree_width / 2**depth) + 2**(depth-1)
+					y = (particle.get_y()[curt] - tree_width/2**(depth+1)) / (tree_width / 2**depth) + 2**(depth-1)
+					z = (particle.get_z()[curt] - tree_width/2**(depth+1)) / (tree_width / 2**depth) + 2**(depth-1)
 
-		size = max(len(x), len(y))
-		if (len(x) < size): x = y
-		if (len(y) < size): y = x
-		plot_arr = [[0 for i in range(size)] for j in range(size)]
-		for row in range(size):
-			for col in range(size):
-				if (row < len(x) and col < len(y) and \
-				    (x[row], y[col]) in densities):
-					plot_arr[row][col] = densities[(x[row],y[col])] / max_density
+					plt.figure(1); plt.plot(x, y, 'go', zorder=1, markersize=1)
+					plt.figure(2); plt.plot(y, z, 'go', zorder=1, markersize=1)
 
-		if (num_out == 1):
-			ax_vec.pcolor(x, y, plot_arr, cmap="coolwarm", shading="auto")
-		elif (num_out <= 5):
-			ax_vec[i].pcolor(x, y, plot_arr, cmap="coolwarm", shading="auto")
+		if (plot_binary):
+			for star in stars:
+					x = (star.get_x()[curt] - tree_width/2**(depth+1)) / (tree_width / 2**depth) + 2**(depth-1)
+					y = (star.get_y()[curt] - tree_width/2**(depth+1)) / (tree_width / 2**depth) + 2**(depth-1)
+					z = (star.get_z()[curt] - tree_width/2**(depth+1)) / (tree_width / 2**depth) + 2**(depth-1)
+
+					plt.figure(1); plt.plot(x, y, 'co', zorder=1, markersize=1)
+					plt.figure(2); plt.plot(y, z, 'co', zorder=1, markersize=1)
+				
+
+		if (plot_disc):
+			plt.figure(1); plt.imshow(xyplane, cmap = "coolwarm"); plt.xlim(0,2**depth); plt.ylim(0,2**depth)
+			plt.figure(2); plt.imshow(zyplane, cmap = "coolwarm"); plt.ylim(2**(depth-1)-2**depth/8,2**(depth-1)+2**depth/8)
 		else:
-			ax_vec[i//5][i%5].pcolor(x,y, plot_arr, cmap="coolwarm", shading="auto")
+			plt.figure(1); plt.xlim(2**(depth-1)-2**depth/8,2**(depth-1)+2**depth/8); plt.ylim(2**(depth-1)-2**depth/8,2**(depth-1)+2**depth/8)
+			plt.figure(2); plt.xlim(2**(depth-1)-2**depth/8,2**(depth-1)+2**depth/8); plt.ylim(2**(depth-1)-2**depth/8,2**(depth-1)+2**depth/8)
+		plt.figure(1); plt.tight_layout(); plt.savefig("treexy" + (str(i) if (i > 99) else '0' + str(i) if (i > 9) else '00' + str(i)) + ".png", dpi=300)
+		plt.figure(2); plt.tight_layout(); plt.savefig("treeyz" + (str(i) if (i > 99) else '0' + str(i) if (i > 9) else '00' + str(i)) + ".png", dpi=300)
+		plt.figure(1); plt.cla()
+		plt.figure(2); plt.cla()
 
-	plt.show()
-
-def add_masses(node, mass, max_depth, cur_depth):
-	if (cur_depth == max_depth):
-		mass.append((node.x,node.y,node.mass))
-	else:
-		for i in range(8):
-			if (node.oct[i] != None):
-				add_masses(node.oct[i], mass, max_depth, cur_depth+1)
-
-def fill_area(x, y, density, size):
-	xs = [x - size/2.0, x - size/2.0, x + size/2.0, x + size/2.0]
-	ys = [y - size/2.0, y + size/2.0, y + size/2.0, y - size/2.0]
-
-	plt.fill(xs, ys, 'r', alpha=density)
-
-def best_fit(x, y, ab, eb, mu):
-	coefs, covar = curve_fit(fitting_function, x, y)
-
-	print(average(coefs) / (ab * eb * (1 - 2*mu)))
-
-	x.sort()
-	return [coefs[0] / x[i] for i in range(len(x)) if x[i] != None]
-
-def fitting_function(x, c):
-	return c / x
-
-def predicted_fit(x, ab, eb, mu):
-	const = ab*eb * 5 * (1 - 2*mu) / 4;
-	return [ const / xi for xi in x ]
-
-def average_all(list, vbreak):
-	return [average(i) for i in list[math.floor(vbreak*len(list)):] if (i != None)]
-
-def average(list):
-	sum = 0; len = 0
-	for i in list:
-		sum += i; len += 1
-	return sum/len
+	os.system("rm -f treexy.mp4 && " + ffmpeg_path + " -hide_banner -loglevel error -pattern_type glob -r 5 -i 'treexy*.png' treexy.mp4 && rm treexy*.png")
+	os.system("rm -f treeyz.mp4 && " + ffmpeg_path + " -hide_banner -loglevel error -pattern_type glob -r 5 -i 'treeyz*.png' treeyz.mp4 && rm treeyz*.png")
 
 main()

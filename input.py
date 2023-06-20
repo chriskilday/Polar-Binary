@@ -1,265 +1,152 @@
 """ input.py """
 
-def read_files(ascii_file, orbit_file, energy_file):
-	fascii = open(ascii_file, 'r')
-	forbit = open(orbit_file, 'r')
-	fenergy = open(energy_file, 'r')
+import os
 
-	n = get_n(fascii); t = []
-	x = [None]*n; v = [None]*n
-	a = [None]*(n-1); e = [None]*(n-1); I = [None]*(n-1)
-	Omega = [None]*(n-1); omega = [None]*(n-1)
+class Particle:
+	def __init__(self):
+		self.position_vec = []
+		self.velocity_vec = []
+		self.vtotal_vec = []
+		self.a_vec = []	
+		self.e_vec = []
 
-	for i in range(n):
-		x[i] = []; v[i] = []
-		if (i<n-1):
-			a[i]=[]; e[i]=[]; I[i]=[]; Omega[i]=[]; omega[i]=[]
+	def add_position(self, x, y, z):
+		self.position_vec.append((x,y,z))
 
-	line_num = 0
-	order = []
-	for line in forbit.readlines():
-		if (line.startswith("***")): continue
-		if (line.startswith("^^^")): order = parse_order(line.strip("^ "), n); continue
-		if (line.startswith("---")):
-			a[get_removed(line)+1] = None
-			e[get_removed(line)+1] = None
+	def add_velocity(self, x, y, z, v):
+		self.velocity_vec.append((x,y,z))
+		self.vtotal_vec.append(v)
+
+	def add_a(self, a):
+		self.a_vec.append(a)
+
+	def add_e(self, e):
+		self.e_vec.append(e)
+
+	def max_t(self):
+		return len(self.position_vec)
+
+	def get_x(self):
+		return [pos[0] for pos in self.position_vec]
+
+	def get_y(self):
+		return [pos[1] for pos in self.position_vec]
+
+	def get_z(self):
+		return [pos[2] for pos in self.position_vec]
+
+	def get_a(self):
+		return self.a_vec
+
+	def get_e(self):
+		return self.e_vec
+
+def read_particles(particle_filename):
+	particle_file = open(particle_filename, 'r')
+
+	n_initial = get_n_initial(particle_file)
+	t = []; noft = []; particles = []; stars = []
+	for i in range(n_initial):
+		particles.append(Particle())
+	stars.append(Particle()); stars.append(Particle())
+
+	for line in particle_file.readlines():
+		if (line.startswith("***") or line.startswith("@@@") or line.startswith("###")):
+			if (line.startswith("@@@")):
+				t.append(t_val(line))
+			if (line.startswith("###")):
+				noft.append(n_val(line))
 			continue
 
-		while (line_num % (n-1) >= 1 and order[(line_num % (n-1))-1] == None):
-			line_num += 1
-		if (len(t) == 0 or get_t(line) != t[len(t)-1]):
-			t.append(get_t(line))
+		splitline = line.split()
+		if (len(splitline) != 10): splitline.append('0')
+		hash = splitline[0]
+		x, y, z = float(splitline[1]), float(splitline[2]), float(splitline[3])
+		vx, vy, vz = float(splitline[4]), float(splitline[5]), float(splitline[6])
+		vtotal = float(splitline[7])
+		a, e = float(splitline[8]), float(splitline[9])
 
-		if (line_num % (n-1) == 0):
-			a[0].append(get_a(line))
-			e[0].append(get_e(line))
-			I[0].append(get_i(line))
-			Omega[0].append(get_Omega(line))
-			omega[0].append(get_omega(line))
-		else:
-			a[order[(line_num % (n-1))-1]+1].append(get_a(line))
-			e[order[(line_num % (n-1))-1]+1].append(get_e(line))
-			I[order[(line_num % (n-1))-1]+1].append(get_i(line))
-			Omega[order[(line_num % (n-1))-1]+1].append(get_Omega(line))
-			omega[order[(line_num % (n-1))-1]+1].append(get_omega(line))
-		line_num += 1
-
-	fascii.close(); forbit.close(); fenergy.close()
-	return (n,t,x,v,a,e,I,Omega,omega)
-
-def read_noft(particle_file):
-	noft = []
-	t = []
-
-	pt_file = open(particle_file, 'r')
-	for line in pt_file.readlines():
-		if (line.startswith("@@@")):
-			t.append(t_val(line))
-		elif (line.startswith("###")):
-			noft.append(noft_val(line))
-	pt_file.close()
-
-	return (noft, t)
-
-def read_positions(particle_file):
-	pt_file = open(particle_file, 'r')
-
-	n = get_n(pt_file)
-	x = []; y = []; z = []; t = []
-	bx = [[],[]]; by = [[],[]]; bz = [[],[]]
-	for i in range(n):
-		x.append([]); y.append([]); z.append([])
-
-	for line in pt_file.readlines():
-		if (line.startswith("***") or line.startswith("###")): continue
-		if (line.startswith("@@@")):
-			t.append(t_val(line))
-			continue
-
-		hash = hash_val(line)
 		if (hash.startswith("Star")):
-			index = int(hash[-1]) - 1
-			bx[index].append(x_val(line))
-			by[index].append(y_val(line))
-			bz[index].append(z_val(line))
+			hash = int(hash.strip("Star")) - 1
+
+			stars[hash].add_position(x,y,z)
+			stars[hash].add_velocity(vx,vy,vz,vtotal)
+			stars[hash].add_a(a)
+			stars[hash].add_e(e)
 		else:
 			hash = int(hash)
 
-			x[hash].append(x_val(line))
-			y[hash].append(y_val(line))
-			z[hash].append(z_val(line))
+			particles[hash].add_position(x,y,z)
+			particles[hash].add_velocity(vx,vy,vz,vtotal)
+			particles[hash].add_a(a)
+			particles[hash].add_e(e)
 
-	pt_file.close()
+	particle_file.close()
+	return (n_initial, t, noft, particles, stars)
 
-	return (n, x, y, z, bx, by, bz, t)
+def read_lost_particles(particles, maxt):
+	out_particles = []
+	for particle in particles:
+		if (particle.max_t() < maxt):
+			out_particles.append(particle)
 
+	return out_particles
 
-def read_orbits(particle_file):
-	pt_file = open(particle_file, 'r')
+tree_width = 60
+def read_tree(particles, time):
+	root = Tree_Node(0,0,0,tree_width)
 
-	n = get_n(pt_file)
-	a, e, i, Omega, t = [], [], [], [], []
-	for j in range(n):
-		a.append([]); e.append([]); i.append([]); Omega.append([])
+	for particle in particles:
+		if (particle.max_t() <= time): continue
+		root.add_particle(particle, time)
 
-	for line in pt_file.readlines():
-		if (line.startswith("***") or line.startswith("###")): continue
-		if (line.startswith("@@@")):
-			t.append(t_val(line))
-			continue
+	return root
 
-		hash = hash_val(line)
-		if (hash.startswith("Star")): continue
-		hash = int(hash)
+def read_noft(particle_filename):
+	(n_initial, t, noft, particles, stars) = read_particles(particle_filename)
+	return (noft, t)
 
-		a[hash].append(a_val(line))
-		e[hash].append(e_val(line))
-		i[hash].append(i_val(line))
-		Omega[hash].append(Omega_val(line))
-
-	pt_file.close()
-
-	return (n, a, e, i, Omega, t)
-
-def read_binary(particle_file):
-	pt_file = open(particle_file, 'r')
-	for line in pt_file.readlines():
-		if (line.startswith("*** MR")):
-			split = line.split()
-			return (float(split[3]), float(split[6]), float(split[9]))
-
-	return 0
-
-def read_tree(treefile, n_nodes):
-	tree_roots = [None] * n_nodes
-	for i in range(n_nodes):
-		filename = treefile + '_' + str(i)+ ".txt" 
-		infile = open(filename, 'r')
-
-		tree_roots[i] = read_node(infile.readline())
-		for line in infile.readlines():
-			tree_roots[i].add_child(read_node(line))
-
-		infile.close()
-
-	return tree_roots
-
-def read_node(line):
-	vals = line.split()[1::2]
-	return Tree_Node(float(vals[0]), float(vals[1]), float(vals[2]), \
-			 float(vals[3]), float(vals[4]))
-
-class Tree_Node:
-	x,y,z = 0.,0.,0.
-	width = 0.
-	mass = 0.
-
-	oct = []
-
-	def __init__(self, x, y, z, width, mass):
-		self.x = x; self.y = y; self.z = z
-		self.width = width
-		self.mass = mass
-		self.oct = [None] * 8
-
-	def __repr__(self):
-		return f"x: {self.x} y: {self.y} z: {self.z} " + \
-			f"w: {self.width} m: {self.mass}"
-
-	def add_child(self, node):
-		if (node.width < 0.51 * self.width and \
-		    node.width > 0.49 * self.width):
-			self.oct[self.get_oct(node)] = node
-		else:
-			self.oct[self.get_oct(node)].add_child(node)
-
-	def get_oct(self, child):
-		oct = int("".join([ "1" if child.x > self.x else "0", \
-		       		     "1" if child.y > self.y else "0", \
-				     "1" if child.z > self.z else "0"]), \
-			   2)
-
-		return oct
-
-	def get_mass(self, x, y, width):
-		if (disjoint(x,y,width, self.x,self.y,self.width)):
-			return 0
-		if (subregion(self.x,self.y,self.width, x,y,width)):
-			return self.mass
-
-		out = 0
-		for child in self.oct:
-			if (child != None): out += child.get_mass(x,y,width)
-
-#		if (out == 0): return self.mass * (width**2 / self.width**2)
-		return out
-
-def get_n(file):
+def get_n_initial(file):
 	file.readline()
 	return int(file.readline().strip(" *N="))
-
-def get_t(line):
-	return float(line.split()[0])
-
-def get_a(line):
-	return float(line.split()[1])
-
-def get_e(line):
-	return float(line.split()[2])
-
-def get_i(line):
-	return float(line.split()[3])
-
-def get_Omega(line):
-	return float(line.split()[4])
-
-def get_omega(line):
-	return float(line.split()[5])
-
-def get_removed(line):
-	return int(line.strip("- "))
-
-def parse_order(line, n):
-	out = [None] * (n-2)
-	split = line.split()
-	for i in range(len(split)):
-		out[i] = int(split[i])
-	return out
-
-def binary_initials(filename):
-	f = open(filename, 'r')
-	line = f.readline()
-	while(not line.startswith('#')): line = f.readline()
-
-	vals = line.strip('# ').split()
-	return (float(vals[0]), float(vals[1]), float(vals[2]), float(vals[3]))
 
 def t_val(line):
 	return float(line.strip(" @\n"))
 
-def noft_val(line):
+def n_val(line):
 	return int(line.strip(" #\n"))
 
-def hash_val(line):
-	return line.split()[0]
+class Tree_Node:
+	def __init__(self, x, y, z, w):
+		self.x = x
+		self.y = y
+		self.z = z
+		self.width = w
 
-def x_val(line):
-	return float(line.split()[1])
+		self.mass = 0
+		self.children = [None] * 8
 
-def y_val(line):
-	return float(line.split()[2])
+	def add_particle(self, particle, t):
+		self.mass += 1
+		index = 2**2 * (1 if (particle.get_x()[t] > self.x) else 0) \
+			+ 2**1 * (1 if (particle.get_y()[t] > self.y) else 0) \
+			+ 2**0 * (1 if (particle.get_z()[t] > self.z) else 0)
 
-def z_val(line):
-	return float(line.split()[3])
+		if (self.children[index] == None): self.children[index] = particle
+		elif (isinstance(self.children[index], Particle)):
+			node = Tree_Node(self.x + self.width / 4 * (1 if (particle.get_x()[t] > self.x) else -1), \
+					 self.y + self.width / 4 * (1 if (particle.get_y()[t] > self.y) else -1), \
+					 self.z + self.width / 4 * (1 if (particle.get_z()[t] > self.z) else -1), \
+					 self.width / 2)
 
-def a_val(line):
-	return float(line.split()[4])
+			node.add_particle(self.children[index], t)
+			node.add_particle(particle, t)
 
-def e_val(line):
-	return float(line.split()[5])
+			self.children[index] = node
+		elif (isinstance(self.children[index], Tree_Node)):
+			self.children[index].add_particle(particle, t)
 
-def i_val(line):
-	return float(line.split()[6])
-
-def Omega_val(line):
-	return float(line.split()[7])
+def contains(lst, elm):
+	for i in lst:
+		if (i == elm): return True
+	return False
